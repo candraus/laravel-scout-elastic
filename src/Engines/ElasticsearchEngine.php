@@ -178,7 +178,7 @@ class ElasticsearchEngine extends Engine
     {
         $collection = collect($builder->wheres);
 
-        if(property_exists($builder->whereIns)) {
+        if(property_exists($builder, "whereIns")) {
             $collection->concat($builder->whereIns);
         }
 
