@@ -111,8 +111,13 @@ class ElasticsearchEngine extends Engine
             'size' => $perPage,
         ]);
 
-        $result['nbPages'] = $result['hits']['total'] / $perPage;
+        if(is_array($result['hits']['total'])) {
+            $result['nbPages'] = $result['hits']['total']['value'] / $perPage;
+        } else {
+            $result['nbPages'] = $result['hits']['total'] / $perPage;
+        }
 
+        //\Log::info([$perPage, $result['hits']['total']['value'], $result['nbPages'] ]);exit;
         return $result;
     }
 
@@ -131,7 +136,7 @@ class ElasticsearchEngine extends Engine
             'body' => [
                 'query' => [
                     'bool' => [
-                        'must' => [['query_string' => ['query' => "*{$builder->query}*"]]]
+                        'must' => [['query_string' => ['query' => "{$builder->query}"]]]
                     ]
                 ]
             ]
@@ -213,8 +218,14 @@ class ElasticsearchEngine extends Engine
      */
     public function map(Builder $builder, $results, $model)
     {
-        if ($results['hits']['total'] === 0) {
-            return $model->newCollection();
+        if(is_array($results['hits']['total'])) {
+            if ($results['hits']['total']['value'] === 0) {
+                return $model->newCollection();
+            }
+        } else {
+            if ($results['hits']['total'] === 0) {
+                return $model->newCollection();
+            }
         }
 
         $keys = collect($results['hits']['hits'])->pluck('_id')->values()->all();
@@ -239,7 +250,11 @@ class ElasticsearchEngine extends Engine
      */
     public function getTotalCount($results)
     {
-        return $results['hits']['total'];
+        if(is_array($results['hits']['total'])) {
+            return $results['hits']['total']['value'];
+        } else {
+            return $results['hits']['total'];
+        }
     }
 
     /**
