@@ -5,7 +5,8 @@ namespace Tamayo\LaravelScoutElastic\Engines;
 use Laravel\Scout\Builder;
 use Laravel\Scout\Engines\Engine;
 use Elasticsearch\Client as Elastic;
-use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Collection;
+use Illuminate\Support\LazyCollection;
 
 class ElasticsearchEngine extends Engine
 {
@@ -285,5 +286,73 @@ class ElasticsearchEngine extends Engine
         return collect($builder->orders)->map(function ($order) {
             return [$order['column'] => $order['direction']];
         })->toArray();
+    }
+
+    /**
+     * Map the given results to instances of the given model via a lazy collection.
+     *
+     * @param  \Laravel\Scout\Builder  $builder
+     * @param  mixed  $results
+     * @param  \Illuminate\Database\Eloquent\Model  $model
+     * @return \Illuminate\Support\LazyCollection
+     */
+    public function lazyMap(Builder $builder, $results, $model)
+    {
+        if (is_array($results['hits']['total'])) {
+            if ($results['hits']['total']['value'] === 0) {
+                return LazyCollection::make($model->newCollection());
+            }
+        } else {
+            if ($results['hits']['total'] === 0) {
+                return LazyCollection::make($model->newCollection());
+            }
+        }
+
+        $keys = collect($results['hits']['hits'])->pluck('_id')->values()->all();
+
+        $modelIdPositions = array_flip($keys);
+
+        return $model->queryScoutModelsByIds(
+            $builder,
+            $keys
+        )->cursor()->filter(function ($model) use ($keys) {
+            return in_array($model->getScoutKey(), $keys);
+        })->sortBy(function ($model) use ($modelIdPositions) {
+            return $modelIdPositions[$model->getScoutKey()];
+        })->values();
+    }
+
+    /**
+     * Create an index in the database
+     *
+     * @param string $name
+     *
+     * @return void
+     */
+    public function createIndex($name, array $options = [])
+    {
+        \Log::info(`Creating index {$name}`);
+    }
+
+    /**
+     * Deletes an index in the database
+     *
+     * @param string $name
+     *
+     * @return void
+     */
+    public function deleteIndex($name)
+    {
+        \Log::info("Deleting index {$name}");
+
+        $response = $this->elastic->indices()->exists([
+            'index' => $name,
+        ]);
+
+        if ($response->asBool()) {
+            $this->elastic->indices()->delete([
+                'index' => $name,
+            ]);
+        }
     }
 }
