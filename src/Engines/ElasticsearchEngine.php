@@ -349,7 +349,7 @@ class ElasticsearchEngine extends Engine
             'index' => $name,
         ]);
 
-        if ($response->asBool()) {
+        if ((is_bool($response) && $response) || $response->asBool()) {
             $this->elastic->indices()->delete([
                 'index' => $name,
             ]);
