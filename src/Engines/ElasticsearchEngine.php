@@ -90,10 +90,10 @@ class ElasticsearchEngine extends Engine
      */
     public function search(Builder $builder)
     {
-        return $this->performSearch($builder, array_filter([
+        return $this->performSearch($builder, array_filter(array_merge([
             'numericFilters' => $this->filters($builder),
             'size' => $builder->limit,
-        ]));
+        ], is_array($builder->options) ? $builder->options : [])));
     }
 
     /**
