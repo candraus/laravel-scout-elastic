@@ -5,7 +5,8 @@ namespace Tamayo\LaravelScoutElastic\Engines;
 use Laravel\Scout\Builder;
 use Laravel\Scout\Engines\Engine;
 use Elasticsearch\Client as Elastic;
-use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Collection;
+use Illuminate\Support\LazyCollection;
 
 class ElasticsearchEngine extends Engine
 {
@@ -41,14 +42,19 @@ class ElasticsearchEngine extends Engine
 
         $params['body'] = [];
 
-        $models->each(function ($model) use (&$params) {
-            $params['body'][] = [
-                'update' => [
-                    '_id' => $model->getScoutKey(),
-                    '_index' => $model->searchableAs(),
-                    '_type' => get_class($model),
-                ]
+        $migrated = config('scout.migrated', false);
+
+        $models->each(function ($model) use (&$params, $migrated) {
+            $update = [
+                '_id' => $model->getScoutKey(),
+                '_index' => $model->searchableAs(),
             ];
+
+            if (! $migrated) {
+                $update['_type'] = get_class($model);
+            }
+
+            $params['body'][] = ['update' => $update];
             $params['body'][] = [
                 'doc' => $model->toSearchableArray(),
                 'doc_as_upsert' => true
@@ -68,14 +74,19 @@ class ElasticsearchEngine extends Engine
     {
         $params['body'] = [];
 
-        $models->each(function ($model) use (&$params) {
-            $params['body'][] = [
-                'delete' => [
-                    '_id' => $model->getKey(),
-                    '_index' => $model->searchableAs(),
-                    '_type' => get_class($model),
-                ]
+        $migrated = config('scout.migrated', false);
+
+        $models->each(function ($model) use (&$params, $migrated) {
+            $delete = [
+                '_id' => $model->getKey(),
+                '_index' => $model->searchableAs(),
             ];
+
+            if (! $migrated) {
+                $delete['_type'] = get_class($model);
+            }
+
+            $params['body'][] = ['delete' => $delete];
         });
 
         $this->elastic->bulk($params);
@@ -89,10 +100,10 @@ class ElasticsearchEngine extends Engine
      */
     public function search(Builder $builder)
     {
-        return $this->performSearch($builder, array_filter([
+        return $this->performSearch($builder, array_filter(array_merge([
             'numericFilters' => $this->filters($builder),
             'size' => $builder->limit,
-        ]));
+        ], is_array($builder->options) ? $builder->options : [])));
     }
 
     /**
@@ -111,8 +122,13 @@ class ElasticsearchEngine extends Engine
             'size' => $perPage,
         ]);
 
-        $result['nbPages'] = $result['hits']['total'] / $perPage;
+        if(is_array($result['hits']['total'])) {
+            $result['nbPages'] = $result['hits']['total']['value'] / $perPage;
+        } else {
+            $result['nbPages'] = $result['hits']['total'] / $perPage;
+        }
 
+        //\Log::info([$perPage, $result['hits']['total']['value'], $result['nbPages'] ]);exit;
         return $result;
     }
 
@@ -127,15 +143,20 @@ class ElasticsearchEngine extends Engine
     {
         $params = [
             'index' => $builder->model->searchableAs(),
-            'type' => get_class($builder->model),
             'body' => [
                 'query' => [
                     'bool' => [
-                        'must' => [['query_string' => ['query' => "*{$builder->query}*"]]]
+                        'must' => [['query_string' => ['query' => "{$builder->query}"]]]
                     ]
                 ]
             ]
         ];
+
+        // OpenSearch removed mapping types from the URL. Only send the legacy
+        // "type" when running against the old Elasticsearch cluster.
+        if (! config('scout.migrated', false)) {
+            $params['type'] = get_class($builder->model);
+        }
 
         if ($sort = $this->sort($builder)) {
             $params['body']['sort'] = $sort;
@@ -176,13 +197,20 @@ class ElasticsearchEngine extends Engine
      */
     protected function filters(Builder $builder)
     {
-        return collect($builder->wheres)->map(function ($value, $key) {
+        $collection = collect($builder->wheres);
+
+        if(property_exists($builder, "whereIns")) {
+            $collection->concat($builder->whereIns);
+        }
+
+        return $collection->map(function ($value, $key) {
             if (is_array($value)) {
                 return ['terms' => [$key => $value]];
             }
 
             return ['match_phrase' => [$key => $value]];
         })->values()->all();
+
     }
 
     /**
@@ -206,8 +234,14 @@ class ElasticsearchEngine extends Engine
      */
     public function map(Builder $builder, $results, $model)
     {
-        if ($results['hits']['total'] === 0) {
-            return $model->newCollection();
+        if(is_array($results['hits']['total'])) {
+            if ($results['hits']['total']['value'] === 0) {
+                return $model->newCollection();
+            }
+        } else {
+            if ($results['hits']['total'] === 0) {
+                return $model->newCollection();
+            }
         }
 
         $keys = collect($results['hits']['hits'])->pluck('_id')->values()->all();
@@ -232,7 +266,11 @@ class ElasticsearchEngine extends Engine
      */
     public function getTotalCount($results)
     {
-        return $results['hits']['total'];
+        if(is_array($results['hits']['total'])) {
+            return $results['hits']['total']['value'];
+        } else {
+            return $results['hits']['total'];
+        }
     }
 
     /**
@@ -263,5 +301,73 @@ class ElasticsearchEngine extends Engine
         return collect($builder->orders)->map(function ($order) {
             return [$order['column'] => $order['direction']];
         })->toArray();
+    }
+
+    /**
+     * Map the given results to instances of the given model via a lazy collection.
+     *
+     * @param  \Laravel\Scout\Builder  $builder
+     * @param  mixed  $results
+     * @param  \Illuminate\Database\Eloquent\Model  $model
+     * @return \Illuminate\Support\LazyCollection
+     */
+    public function lazyMap(Builder $builder, $results, $model)
+    {
+        if (is_array($results['hits']['total'])) {
+            if ($results['hits']['total']['value'] === 0) {
+                return LazyCollection::make($model->newCollection());
+            }
+        } else {
+            if ($results['hits']['total'] === 0) {
+                return LazyCollection::make($model->newCollection());
+            }
+        }
+
+        $keys = collect($results['hits']['hits'])->pluck('_id')->values()->all();
+
+        $modelIdPositions = array_flip($keys);
+
+        return $model->queryScoutModelsByIds(
+            $builder,
+            $keys
+        )->cursor()->filter(function ($model) use ($keys) {
+            return in_array($model->getScoutKey(), $keys);
+        })->sortBy(function ($model) use ($modelIdPositions) {
+            return $modelIdPositions[$model->getScoutKey()];
+        })->values();
+    }
+
+    /**
+     * Create an index in the database
+     *
+     * @param string $name
+     *
+     * @return void
+     */
+    public function createIndex($name, array $options = [])
+    {
+        \Log::info(`Creating index {$name}`);
+    }
+
+    /**
+     * Deletes an index in the database
+     *
+     * @param string $name
+     *
+     * @return void
+     */
+    public function deleteIndex($name)
+    {
+        \Log::info("Deleting index {$name}");
+
+        $response = $this->elastic->indices()->exists([
+            'index' => $name,
+        ]);
+
+        if ((is_bool($response) && $response) || $response->asBool()) {
+            $this->elastic->indices()->delete([
+                'index' => $name,
+            ]);
+        }
     }
 }
