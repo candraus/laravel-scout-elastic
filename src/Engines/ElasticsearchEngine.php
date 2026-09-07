@@ -42,14 +42,19 @@ class ElasticsearchEngine extends Engine
 
         $params['body'] = [];
 
-        $models->each(function ($model) use (&$params) {
-            $params['body'][] = [
-                'update' => [
-                    '_id' => $model->getScoutKey(),
-                    '_index' => $model->searchableAs(),
-                    '_type' => get_class($model),
-                ]
+        $migrated = config('scout.migrated', false);
+
+        $models->each(function ($model) use (&$params, $migrated) {
+            $update = [
+                '_id' => $model->getScoutKey(),
+                '_index' => $model->searchableAs(),
             ];
+
+            if (! $migrated) {
+                $update['_type'] = get_class($model);
+            }
+
+            $params['body'][] = ['update' => $update];
             $params['body'][] = [
                 'doc' => $model->toSearchableArray(),
                 'doc_as_upsert' => true
@@ -69,14 +74,19 @@ class ElasticsearchEngine extends Engine
     {
         $params['body'] = [];
 
-        $models->each(function ($model) use (&$params) {
-            $params['body'][] = [
-                'delete' => [
-                    '_id' => $model->getKey(),
-                    '_index' => $model->searchableAs(),
-                    '_type' => get_class($model),
-                ]
+        $migrated = config('scout.migrated', false);
+
+        $models->each(function ($model) use (&$params, $migrated) {
+            $delete = [
+                '_id' => $model->getKey(),
+                '_index' => $model->searchableAs(),
             ];
+
+            if (! $migrated) {
+                $delete['_type'] = get_class($model);
+            }
+
+            $params['body'][] = ['delete' => $delete];
         });
 
         $this->elastic->bulk($params);
@@ -133,7 +143,6 @@ class ElasticsearchEngine extends Engine
     {
         $params = [
             'index' => $builder->model->searchableAs(),
-            'type' => get_class($builder->model),
             'body' => [
                 'query' => [
                     'bool' => [
@@ -142,6 +151,12 @@ class ElasticsearchEngine extends Engine
                 ]
             ]
         ];
+
+        // OpenSearch removed mapping types from the URL. Only send the legacy
+        // "type" when running against the old Elasticsearch cluster.
+        if (! config('scout.migrated', false)) {
+            $params['type'] = get_class($builder->model);
+        }
 
         if ($sort = $this->sort($builder)) {
             $params['body']['sort'] = $sort;
