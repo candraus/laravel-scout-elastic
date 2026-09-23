@@ -32,7 +32,9 @@ class LaravelScoutElasticProvider extends ServiceProvider
                         'curl' => [
                             CURLOPT_SSL_VERIFYPEER => false,
                             CURLOPT_SSL_VERIFYHOST => 0,
-                        ],
+                        ],                        
+                        'connect_timeout' => config('scout.elasticsearch.connect_timeout', 2),
+                        'timeout'         => config('scout.elasticsearch.timeout', 10),
                     ],
                 ]);
             } else {
