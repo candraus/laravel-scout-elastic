@@ -18,7 +18,7 @@ class LaravelScoutElasticProvider extends ServiceProvider
         $this->ensureElasticClientIsInstalled();
 
         resolve(EngineManager::class)->extend('elasticsearch', function () {
-            $verify = config('scout.elasticsearch.ca_bundle') ?? config('scout.elasticsearch.verify');
+            $verify = config('scout.elasticsearch.ca_bundle') ?? config('scout.elasticsearch.verify', false);
 
             $builder = ClientBuilder::create()
                 ->setHosts(config('scout.elasticsearch.hosts')); // logs requests, responses, errors
