@@ -42,7 +42,7 @@ class ElasticsearchEngine extends Engine
 
         $params['body'] = [];
 
-        $migrated = config('scout.migrated', false);
+        $migrated = config('scout.migrated', false) || config('scout.elasticsearch.notype', false);
 
         $models->each(function ($model) use (&$params, $migrated) {
             $update = [
@@ -74,7 +74,7 @@ class ElasticsearchEngine extends Engine
     {
         $params['body'] = [];
 
-        $migrated = config('scout.migrated', false);
+        $migrated = config('scout.migrated', false) || config('scout.elasticsearch.notype', false);
 
         $models->each(function ($model) use (&$params, $migrated) {
             $delete = [
@@ -152,9 +152,11 @@ class ElasticsearchEngine extends Engine
             ]
         ];
 
+        $migrated = config('scout.migrated', false) || config('scout.elasticsearch.notype', false);
+
         // OpenSearch removed mapping types from the URL. Only send the legacy
         // "type" when running against the old Elasticsearch cluster.
-        if (! config('scout.migrated', false)) {
+        if (! $migrated) {
             $params['type'] = get_class($builder->model);
         }
 
@@ -302,6 +304,7 @@ class ElasticsearchEngine extends Engine
             return [$order['column'] => $order['direction']];
         })->toArray();
     }
+
 
     /**
      * Map the given results to instances of the given model via a lazy collection.
